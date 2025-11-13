@@ -1,71 +1,24 @@
-import argparse
-import pandas as pd
-from sklearn import ensemble, linear_model
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-from joblib import dump
-
-from featurize import create_pipeline
-
-def build_model(which: str):
-    which = which.lower()
-    if which == "rf":
-        return ensemble.RandomForestClassifier(
-            criterion="gini",
-            n_estimators=1750,
-            max_depth=7,
-            min_samples_split=6,
-            min_samples_leaf=6,
-            max_features="sqrt",   
-            oob_score=True,
-            random_state=42,
-            n_jobs=-1,
-            verbose=0
-        )
-    if which == "gbdt":
-        return ensemble.GradientBoostingClassifier(
-            max_depth=1, max_features=None, n_estimators=3,
-            random_state=42, warm_start=True
-        )
-    if which == "ridge":
-        return linear_model.RidgeClassifierCV()
-    raise ValueError("Unknown model. Use: rf | gbdt | ridge")
+import argparse, pandas as pd
+from sklearn.metrics import accuracy_score, f1_score
+from mlops_2025.features.titanic import TitanicFeaturizer
+from mlops_2025.models import LogisticModel
 
 def main():
-    ap = argparse.ArgumentParser(description="Evaluate a model with a fixed featurization pipeline.")
-    ap.add_argument("-i","--input", required=True, help="Input CSV (raw data)")
-    ap.add_argument("-y","--target", required=True, help="Target column")
-    ap.add_argument("--model", default="rf", choices=["rf","gbdt","ridge"], help="Which classifier to use")
-    ap.add_argument("--test_size", type=float, default=0.2, help="Holdout fraction")
-    ap.add_argument("--save", default=None, help="Optional path to save the fitted pipeline (.joblib)")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--eval_csv", required=True)
+    ap.add_argument("--target", default="Survived")
+    ap.add_argument("--model_path", required=True)
+    ap.add_argument("--featurizer_path", default="./data/featurizer.joblib")
     args = ap.parse_args()
 
-    df = pd.read_csv(args.input)
-    if args.target not in df.columns:
-        raise ValueError(f"Target '{args.target}' not in columns.")
+    df = pd.read_csv(args.eval_csv)
+    y = df[args.target].astype(int).values
+    fe = TitanicFeaturizer.load(args.featurizer_path)
+    X, _ = fe.transform(df.drop(columns=[args.target]))
 
-    y = df[args.target].copy()
-    X = df.drop(columns=[args.target])
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=args.test_size, stratify=y if y.nunique()>1 else None, random_state=42
-    )
-
-    clf = build_model(args.model)
-    pipe = create_pipeline(clf)
-    pipe.fit(X_train, y_train)
-
-    y_pred = pipe.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
-    print(f"Accuracy: {acc:.4f}")
-    print("\nConfusion matrix:")
-    print(confusion_matrix(y_test, y_pred))
-    print("\nClassification report:")
-    print(classification_report(y_test, y_pred, digits=4))
-
-    if args.save:
-        dump(pipe, args.save)
-        print(f"\nSaved fitted pipeline to: {args.save}")
+    m = LogisticModel.load(args.model_path)
+    yhat = m.predict(X)
+    print(f"accuracy={accuracy_score(y,yhat):.4f}  f1={f1_score(y,yhat):.4f}")
 
 if __name__ == "__main__":
     main()
